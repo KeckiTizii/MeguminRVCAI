@@ -1,16 +1,11 @@
-import wave
 import os
-from pathlib import Path
-from time import sleep
-
 import concurrent.futures
 import threading
-import keyboard
-import pyaudio
-import requests
 import asyncio
 import edge_tts
+import tkinter as tk
 import soundfile as sf
+import speech_recognition as sr
 from colorama import Style, Fore
 from pydub import AudioSegment, playback
 from infer_rvc_python import BaseLoader
@@ -18,8 +13,9 @@ from googletrans import Translator
 from characterai import aiocai
 from dotenv import load_dotenv
 
-from src.modules.asr import speech_to_text
 
+r = sr.Recognizer()
+m = sr.Microphone()
 load_dotenv()
 
 translator = Translator()
@@ -30,13 +26,6 @@ OUTPUT_EDGE = "audio/megumin-edge.wav"
 OUTPUT_RVC = "audio/megumin-rvc.wav"
 VOICES = [ 'ja-JP-NanamiNeural']
 VOICE = VOICES[0]
-INPUT_LANGUAGE = os.getenv('INPUT_LANGUAGE_CODE')
-MIC_ID = int(os.getenv('MICROPHONE_ID'))
-RECORD_KEY = os.getenv('MIC_RECORD_KEY')
-LOGGING = os.getenv('LOGGING', 'False').lower() in ('true', '1', 't')
-MIC_AUDIO_PATH = Path(__file__).resolve().parent / r'src/audio/mic.wav'
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
 
 converter = BaseLoader(only_cpu=False, hubert_path=None, rmvpe_path=None)
 
@@ -79,12 +68,13 @@ async def chat():
         message = await chat.send_message(
             char, chat_id, text
         )
-
+        global ai_res_trans_log
         ai_res_trans_tts = translator.translate(message.text, dest='ja').text
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(airestranslog, message.text)
             ai_res_trans_log = await asyncio.wrap_future(future)
         await edgetts(ai_res_trans_tts)
+        
         print(f'{message.name}: {ai_res_trans_log}')
         await rvc_tts()
         PLAY_RVC = AudioSegment.from_wav(OUTPUT_RVC)
@@ -93,7 +83,7 @@ async def chat():
 def starting():
     cl = lambda: os.system('cls')
     cl()
-    print("""
+    print(Fore.RED + Style.BRIGHT +"""
 ⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⠴⠚⠋⠉⠁⣀⣤⣴⣶⣿⣿⣦⡀⠀⠀⠉⠛⢷⣄⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⠚⠋⠁⢀⡤⠖⠊⠛⢿⣅⠀⠀⠈⠙⠛⠿⣿⣦⡀⠀⠀⠀⠙⢷⣤⡀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡴⠞⠋⠁⠀⣀⣤⠖⠛⠳⣄⠀⠀⠀⠈⠳⢤⡀⠀⠀⠀⠀⠉⠻⣦⡀⠀⠀⠀⢻⡻⣦⡀⠀⠀⠀⠀⠀⠀
@@ -119,87 +109,30 @@ def starting():
 ⣷⡀⢻⣿⣦⡙⢀⠀⠀⠈⠛⣦⡀⠀⠙⢶⡦⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠒⠤⠄⠒⠋⠁⠀⠀⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ⣿⣿⣆⠻⣿⣿⣿⣷⠀⠀⠀⠈⠻⣷⣶⢦⣍⣳⣭⣑⡒⢤⣄⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ⣿⣿⣿⣷⣝⣿⣿⣿⣿⣶⣷⣞⠄⠀⠉⣳⣦⣄⣈⠉⠁⠀⠀⠀⠉⠉⠒⣶⣤⣤⣤⣤⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿""")
-    print(Style.BRIGHT + "              Megumin AI Project\n                By: KenkiTizi")
-    print(Style.RESET_ALL + f'Hold {RECORD_KEY} To Record')
-        
-def on_press_key(_):
-    global frames, recording, stream
-    if not recording:
-        frames = []
-        recording = True
-        stream = p.open(format=FORMAT,
-                        channels=MIC_CHANNELS,
-                        rate=MIC_SAMPLING_RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK,
-                        input_device_index=MIC_ID)
+    print(Fore.RESET + Style.BRIGHT + "              Megumin AI Project\n                By: KenkiTizi")
 
 
-def on_release_key(_):
-    global recording, stream
-    recording = False
-    stream.stop_stream()
-    stream.close()
-    stream = None
-
-    # if empty audio file
-    if not frames:
-        print('No audio file to transcribe detected.')
-        return
-
-    # write microphone audio to file
-    wf = wave.open(str(MIC_AUDIO_PATH), 'wb')
-    wf.setnchannels(MIC_CHANNELS)
-    wf.setsampwidth(p.get_sample_size(FORMAT))
-    wf.setframerate(MIC_SAMPLING_RATE)
-    wf.writeframes(b''.join(frames))
-    wf.close()
-
-    # transcribe audio
-    try:
-        global speech
-        speech = speech_to_text(MIC_AUDIO_PATH, 'transcribe', INPUT_LANGUAGE)
-    except requests.exceptions.JSONDecodeError:
-        print('Too many requests to process at once')
-        return
-
-    if speech:
-        global translated_speech
-        translated_speech = translator.translate(speech, dest='en').text
-        if LOGGING:
-            print(f'You: {speech}')
-            print(f'Translated: {translated_speech}')
-            asyncio.run(chat())
-            print(f'Hold {RECORD_KEY} To Record')
-
-    else:
-        print('No speech detected. Please try again')
-
-
-if __name__ == '__main__':
-    p = pyaudio.PyAudio()
-
-    # get channels and sampling rate of mic
-    mic_info = p.get_device_info_by_index(MIC_ID)
-    MIC_CHANNELS = mic_info['maxInputChannels']
-    MIC_SAMPLING_RATE = int(mic_info['defaultSampleRate'])
-
-    frames = []
-    recording = False
-    stream = None
-
+try:
     asyncio.run(rvc_tts())
     starting()
-    keyboard.on_press_key(RECORD_KEY, on_press_key)
-    keyboard.on_release_key(RECORD_KEY, on_release_key)
+    print(Style.RESET_ALL + "A moment of silence, please...")
+    with m as source: r.adjust_for_ambient_noise(source)
+    print("Set minimum energy threshold to {}".format(r.energy_threshold))
+    while True:
+        print("Say something!")
+        with m as source: audio = r.listen(source)
+        print("Got it! Now to recognize it...")
+        try:
+            speech = r.recognize_google(audio, language="vi-VN", show_all= False)
 
-    try:
-        while True:
-            if recording and stream:
-                data = stream.read(CHUNK)
-                frames.append(data)
-            else:
-                sleep(0.5)
 
-    except KeyboardInterrupt:
-        print('Closing MeguminAI... \n Thanks For Using.')
+            print("You: {}".format(speech))
+            global translated_speech
+            translated_speech = translator.translate(speech, dest='en').text
+            asyncio.run(chat())
+        except sr.UnknownValueError:
+            print("Oops! Didn't catch that")
+        except sr.RequestError as e:
+            print("Uh oh! Couldn't request results from Google Speech Recognition service; {0}".format(e))
+except KeyboardInterrupt:
+    print('Closing MeguminAI... \n Thanks For Using.')
